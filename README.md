@@ -13,6 +13,8 @@
 
 [[English Paper](./Recurrent_Looped_Transformer.pdf)] [[中文论文](./Recurrent_Looped_Transformer_ZH.pdf)] [[Project Website](https://yifanzhang-pro.github.io/recurrent-looped-tranformer/)]
 
+![figure1](figure1.png) 
+
 ## Three design principles
 
 1. **Latent reasoning with infinite temporal depth.** Each processed token extends a recurrent path through the decoder. With decoder depth $L_D$, the path traverses $tL_D$ blocks after $t$ tokens, while the number of blocks executed per token stays fixed.
