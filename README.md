@@ -25,17 +25,17 @@
 
 For token $x_t$, let $e_t$ be its causal encoder representation and $M_{\le t}$ the encoder-derived global KV memory. The complete decoder state includes both the recurrent output and layerwise SWA KV:
 
-$$
+```math
 H_t=(s_t,C_t^D),\qquad H_0=(s_\star,\varnothing).
-$$
+```
 
-$$
-(s_t,C_t^D)=D_\phi\!\left(\operatorname{Merge}(e_t,s_{t-1});M_{\le t},C_{t-1}^D,t\right).
-$$
+```math
+(s_t,C_t^D)=D_\phi\!\left(\mathrm{Merge}(e_t,s_{t-1});M_{\le t},C_{t-1}^D,t\right).
+```
 
-$$
-p_\Theta(x_{t+1}\mid x_{1:t})=\operatorname{softmax}\!\left(W_o\operatorname{RMSNorm}_o(s_t)\right)_{x_{t+1}}.
-$$
+```math
+p_\Theta(x_{t+1}\mid x_{1:t})=\mathrm{softmax}\!\left(W_o\mathrm{RMSNorm}_o(s_t)\right)_{x_{t+1}}.
+```
 
 - **Global context:** cross-attention reads encoder memory only through the current position.
 - **Local decoder memory:** SWA reads recent decoder KV and the current token's KV. A window of $W$ includes the current token; up to $W-1$ historical entries are retained for the next update.
