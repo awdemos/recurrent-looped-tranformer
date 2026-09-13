@@ -8,11 +8,14 @@
 
 pub mod config;
 pub mod error;
+pub mod model;
 pub mod nn;
 pub mod state;
 pub mod tokenizer;
 
+pub use candle_core::{Device, Tensor};
 pub use config::RltConfig;
 pub use error::{Result, RltError};
+pub use model::Rlt;
 pub use state::{GroupKv, LayerKv, RltState};
 pub use tokenizer::{ByteTokenizer, BOS_ID, EOS_ID, MIN_VOCAB};
