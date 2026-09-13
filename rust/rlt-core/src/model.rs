@@ -107,19 +107,15 @@ pub struct Rlt {
     pub device: Device,
     embedding: Embedding,
     encoder: Vec<EncoderBlock>,
-    // Read by the decoder unroll once execution lands (recurrent step path).
-    #[allow(dead_code)]
     decoder: Vec<DecoderBlock>,
-    mem_k: Vec<Linear>,
-    mem_v: Vec<Linear>,
+    pub(crate) mem_k: Vec<Linear>,
+    pub(crate) mem_v: Vec<Linear>,
     merge_w_g: Linear,
     merge_b_g: Tensor,
     merge_w_s: Linear,
     readout: Linear,
-    // Initial recurrent output s_0 = s_star (used by initial_state).
-    #[allow(dead_code)]
-    s_star: Tensor,
-    rotary: RotaryEmbedding,
+    pub(crate) s_star: Tensor,
+    pub(crate) rotary: RotaryEmbedding,
 }
 
 impl Rlt {
@@ -130,8 +126,13 @@ impl Rlt {
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
         let d = config.d_model;
         let emb = Embedding::new(
-            vb.pp("embedding")
-                .get((config.vocab_size, d), "embeddings")?,
+            vb.pp("embedding").get_with_hints(
+                (config.vocab_size, d),
+                "embeddings",
+                // candle 0.11 `Init::default()` is `Const(0)`: an implicit `get`
+                // here would leave the model input-independent.
+                Init::Uniform { lo: -0.02, up: 0.02 },
+            )?,
             d,
         );
         let mut encoder = Vec::with_capacity(config.n_encoder_layers);
@@ -149,10 +150,10 @@ impl Rlt {
             mem_v.push(linear(vb.pp(format!("mem.{g}.v")), d, d)?);
         }
         let merge_w_g = linear(vb.pp("merge.w_g"), 2 * d, d)?;
-        let merge_b_g = vb.pp("merge").get((d,), "b_g")?;
+        let merge_b_g = vb.pp("merge").get_with_hints((d,), "b_g", Init::Const(0.))?;
         let merge_w_s = linear(vb.pp("merge.w_s"), d, d)?;
         let readout = linear(vb.pp("readout"), d, config.vocab_size)?;
-        let s_star = vb.pp("state").get((d,), "s_star")?;
+        let s_star = vb.pp("state").get_with_hints((d,), "s_star", Init::Const(0.))?;
         let rotary = RotaryEmbedding::new(config.head_dim(), config.max_seq_len, &device)?;
         Ok(Self {
             config,
@@ -281,7 +282,6 @@ impl Rlt {
 
     /// Decoder unroll for one merged token: L_D recurrent block steps.
     /// Updates `state.decoder` caches and returns the new s_t (1,D).
-    #[allow(dead_code)] // used by the recurrent-step execution path (Task 8)
     pub(crate) fn decoder_unroll(&self, u: &Tensor, state: &mut crate::RltState) -> Result<Tensor> {
         let mut z = u.clone(); // (1,1,D)
         for (l, blk) in self.decoder.iter().enumerate() {
@@ -391,7 +391,13 @@ impl DecoderBlock {
         };
         let att = nn::sdpa(&q, &k_all, &v_all, None)?;
         // Retain at most W−1 historical positions (paper §2.5 eviction convention).
-        *cache = Some(LayerKv { k: k_all, v: v_all }.trimmed(self.window.saturating_sub(1))?);
+        // W=1 keeps no history: the cache stays permanently empty, represented as None.
+        let keep = self.window.saturating_sub(1);
+        *cache = if keep == 0 {
+            None
+        } else {
+            Some(LayerKv { k: k_all, v: v_all }.trimmed(keep)?)
+        };
         let mut z = (z + self.self_o.forward(&nn::merge_heads(&att)?)?)?;
 
         // 2. Encoder-memory cross-attention (Eq. 2.15). All prefix entries valid.

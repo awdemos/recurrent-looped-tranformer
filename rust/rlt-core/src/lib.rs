@@ -5,9 +5,20 @@
 //! complete state `H_t = (s_t, C_t^D)` (recurrent output + per-layer SWA caches)
 //! across every prompt and response token. See `Recurrent_Looped_Transformer.pdf`
 //! (Zhang, 2026) for the reference semantics.
+//!
+//! ```
+//! use rlt_core::{Rlt, RltConfig, ByteTokenizer, Device};
+//! # fn main() -> rlt_core::Result<()> {
+//! let model = Rlt::new(RltConfig::default(), Device::Cpu)?;
+//! let tok = ByteTokenizer::new(258)?;
+//! let (logits, state) = model.prefill(&tok.encode("Hi", true, false))?;
+//! assert_eq!(logits.len(), 3);
+//! # Ok(()) }
+//! ```
 
 pub mod config;
 pub mod error;
+pub mod execution;
 pub mod model;
 pub mod nn;
 pub mod state;
