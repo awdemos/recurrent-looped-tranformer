@@ -1,0 +1,24 @@
+[package]
+name = "rlt-cli"
+description = "CLI for the Recurrent Looped Transformer (rlt-core): initialize checkpoints, train on a corpus with full BPTT, generate text."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/rlt-cli"
+readme = "README.md"
+categories = ["science", "command-line-utilities"]
+keywords = ["rlt", "transformer", "language-model", "cli"]
+
+[[bin]]
+name = "rlt"
+path = "src/main.rs"
+
+[dependencies]
+rlt-core = { version = "0.1.0", path = "../rlt-core" }
+candle-nn.workspace = true
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+rand = "0.10"

@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["rlt-core", "rlt-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Yifan Zhang"]
+homepage = "https://github.com/awdemos/recurrent-looped-tranformer"
+repository = "https://github.com/awdemos/recurrent-looped-tranformer"
+
+[workspace.dependencies]
+candle-core = "0.11"
+candle-nn = "0.11"
