@@ -23,7 +23,8 @@
   `Init::Uniform { lo, up }` (field is `up`, not `hi`); `VarBuilder::get`/`get_with_hints`
   return `Tensor` directly (NO `.as_tensor()`); `AdamW::new(vars, ParamsAdamW { lr, ..Default::default() })`;
   mutate a parameter via `model.varmap.data().lock().unwrap().get(name)` (a `Var`) + `.set(&tensor)`;
-  4-D tensor extraction has no `to_vec4` — use the `t4` reshape+`to_vec3` helper in tests.
+  4-D tensor extraction has no `to_vec4` — use the `t4` reshape+`to_vec3` helper in tests;
+  rand 0.10 moved `rng.random()` to the `rand::RngExt` trait (import `RngExt`, not `Rng`).
 - The module tree is wired incrementally: `lib.rs` gains `pub mod` lines and
   re-exports task by task so the workspace builds green at every commit. There is no
   `attention.rs` module — attention primitives live in `nn.rs`.
@@ -961,6 +962,11 @@ git commit -m "rust(rlt-core): rmsnorm, rope, attention primitives"
 > 6. Memory projections MUST use distinct var-builder prefixes `mem.{g}.k` /
 >    `mem.{g}.v` — same prefix + same shape silently aliases one tensor in the
 >    VarMap (caught by review; regression test `memory_key_value_projections_are_distinct`).
+> 7. candle 0.11 `VarBuilder::get(shape, name)` defaults to `Init::Const(0.)`:
+>    EVERY non-`linear()` variable needs an explicit init — embedding
+>    `Init::Uniform { lo: -0.02, up: 0.02 }`; `merge.b_g` and `state.s_star`
+>    explicitly `Init::Const(0.)`. (Silent zero-init made the model
+>    input-independent until Task 8's causality test caught it.)
 
 **Files:**
 - Create: `rust/rlt-core/src/model.rs`
@@ -1719,6 +1725,16 @@ git commit -m "rust(rlt-core): prefill, incremental step, full-BPTT train_step"
 
 ### Task 9: Gradient and masking verification
 
+> **Verified corrections applied during implementation:**
+> 1. candle 0.11 `matmul` does not broadcast batch dims — the FD test uses
+>    `broadcast_matmul` for the (1,2,3,8)@(8,8) product.
+> 2. In `fd_matches_backprop_on_attention_ops`, reshape `xw` to (1,6,8) before
+>    `split_heads` (the plan's squeeze/unsqueeze produced a 5-D tensor that
+>    `RotaryEmbedding::apply` rejects).
+> 3. Use `mean_all()` instead of `sum_all()` in that FD loss — the O(50)
+>    sum-of-squares magnified f32 cancellation noise in `lp − lm` above the 5e-3
+>    tolerance; the 1/N scalar scales FD and analytic identically (tolerance kept).
+
 **Files:**
 - Test: `rust/rlt-core/tests/gradients.rs`
 
@@ -2117,6 +2133,10 @@ git commit -m "rust(rlt-core): sampling + autoregressive generate"
 ---
 
 ### Task 11: `replay.rs` — current-policy RL replay
+
+> **Verified correction:** squeeze each gathered log-prob to a rank-0 scalar
+> BEFORE stacking, so `current_logprobs` is (A,) as documented (`to_scalar`
+> requires rank 0; stacking (1,) tensors would give (A,1)).
 
 **Files:**
 - Create: `rust/rlt-core/src/replay.rs`
@@ -2784,9 +2804,11 @@ git commit -m "rust: crate READMEs"
 - [ ] **Step 1: Full test suite**
 
 Run: `cd rust && cargo test --workspace 2>&1 | tail -25`
-Expected: all suites `ok` — api_probe (2), config (4), tokenizer (3), nn (5),
-encoder (1), execution (4), gradients (5), sampling (4), replay (2), checkpoint (2),
-cli (1). Failures must be fixed, never skipped.
+Expected: all suites `ok` — api_probe (2), config (4), tokenizer (5), nn (6),
+encoder (2), execution (4), gradients (5), sampling (6), replay (4), checkpoint (2),
+cli (2) = 42 integration tests + 1 doctest. Failures must be fixed, never skipped.
+(If a suite count differs by ±1, reconcile against the actual test files before
+proceeding — the authoritative gate is "everything the plan specifies passes".)
 
 - [ ] **Step 2: Clippy**
 
