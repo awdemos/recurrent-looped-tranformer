@@ -37,3 +37,16 @@ fn encode_parallel_matches_incremental() {
         assert_eq!(c.len(), tokens.len());
     }
 }
+
+#[test]
+fn memory_key_value_projections_are_distinct() {
+    let model = Rlt::new(tiny_config(), Device::Cpu).unwrap();
+    let data = model.varmap.data().lock().unwrap();
+    let k = data.get("mem.0.k.weight").expect("mem.0.k.weight missing");
+    let v = data.get("mem.0.v.weight").expect("mem.0.v.weight missing");
+    assert_ne!(
+        k.as_tensor().to_vec2::<f32>().unwrap(),
+        v.as_tensor().to_vec2::<f32>().unwrap(),
+        "K and V memory projections must be distinct parameters"
+    );
+}

@@ -145,8 +145,8 @@ impl Rlt {
         let mut mem_k = Vec::with_capacity(config.memory_groups);
         let mut mem_v = Vec::with_capacity(config.memory_groups);
         for g in 0..config.memory_groups {
-            mem_k.push(linear(vb.pp(format!("mem.{g}")), d, d)?);
-            mem_v.push(linear(vb.pp(format!("mem.{g}")), d, d)?);
+            mem_k.push(linear(vb.pp(format!("mem.{g}.k")), d, d)?);
+            mem_v.push(linear(vb.pp(format!("mem.{g}.v")), d, d)?);
         }
         let merge_w_g = linear(vb.pp("merge.w_g"), 2 * d, d)?;
         let merge_b_g = vb.pp("merge").get((d,), "b_g")?;
