@@ -836,7 +836,8 @@ pub const NORM_EPS: f32 = 1e-5;
 
 /// Unweighted RMSNorm over the last dimension.
 pub fn rms_norm(x: &Tensor, eps: f32) -> Result<Tensor> {
-    let ms = x.powf(2.)?.mean(D::Minus1)?;
+    // `mean` drops the last dim; unsqueeze keeps it so broadcast divides rows.
+    let ms = x.powf(2.)?.mean(D::Minus1)?.unsqueeze(D::Minus1)?;
     let denom = ms.broadcast_add(&Tensor::new(eps, x.device())?)?.sqrt()?;
     x.broadcast_div(&denom)
 }
@@ -941,6 +942,25 @@ git commit -m "rust(rlt-core): rmsnorm, rope, attention primitives"
 ---
 
 ### Task 7: `model.rs` — encoder + `Rlt` core
+
+> **Verified corrections applied during implementation** (repo code is authoritative;
+> the code blocks below show the intent — apply these deltas if re-deriving):
+> 1. Use `crate::Result` (not `candle_core::Result`) — the file returns `RltError`
+>    variants, and `&Tensor + Tensor` yields `candle_core::Result`, so additive tail
+>    expressions are written `Ok((x + ff)?)` (likewise in `merge`, `logits`,
+>    `decoder_unroll`).
+> 2. candle 0.11 `Linear` stores weight as **(out_dim, in_dim)** (`y = x @ wᵀ`):
+>    `linear()` must build `(out_dim, in_dim)`.
+> 3. `merge_w_g`/`merge_w_s` need distinct var-builder prefixes (`merge.w_g`,
+>    `merge.w_s`) or the VarMap collides on shape; `merge_b_g` remains `merge.b_g`
+>    (Task 9's FD test uses that exact name).
+> 4. `project_memory` passes the (1,T,D) encoder output straight to `split_heads`
+>    (no `unsqueeze` — it expects 3-D).
+> 5. The encoder test clones the config (`Rlt::new(cfg.clone(), …)`) since `new`
+>    consumes it.
+> 6. Memory projections MUST use distinct var-builder prefixes `mem.{g}.k` /
+>    `mem.{g}.v` — same prefix + same shape silently aliases one tensor in the
+>    VarMap (caught by review; regression test `memory_key_value_projections_are_distinct`).
 
 **Files:**
 - Create: `rust/rlt-core/src/model.rs`
