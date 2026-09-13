@@ -142,7 +142,12 @@ fn var_and_optimizer_probe() -> candle_core::Result<()> {
     let mut opt = AdamW::new(
         vm.all_vars(),
         ParamsAdamW {
-            lr: 0.01,
+            // Small lr: AdamW's first step moves each weight by ~lr regardless
+            // of gradient scale, and for small init draws the recomputed
+            // quadratic loss is tiny (~1e-3), so lr=0.01 overshoots the
+            // minimum and the loss can increase (measured 3/200 inits at
+            // lr=0.01; 0/2000 at lr=0.001).
+            lr: 0.001,
             ..Default::default()
         },
     )?;
