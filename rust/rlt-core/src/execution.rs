@@ -144,4 +144,29 @@ impl Rlt {
         opt.backward_step(&loss)?;
         Ok(loss.to_scalar::<f32>()? as f64)
     }
+
+    /// Autoregressive generation (paper §A.2): prefill the prompt, then sample and
+    /// consume tokens. Returns sampled tokens (with log-probs) and the final state.
+    pub fn generate(
+        &self,
+        prompt: &[u32],
+        max_tokens: usize,
+        sampler: &crate::Sampler,
+        rng: &mut rand::rngs::StdRng,
+        stop_at_eos: bool,
+    ) -> Result<(Vec<crate::SampledToken>, RltState)> {
+        let (_, mut state) = self.prefill(prompt)?;
+        let mut out = Vec::new();
+        for _ in 0..max_tokens {
+            let logits = self.logits(&state.s)?;
+            let tok = crate::sample_from_logits(&logits, sampler, rng)?;
+            let is_eos = tok.token == crate::tokenizer::EOS_ID;
+            out.push(tok.clone());
+            self.step(tok.token, &mut state)?;
+            if stop_at_eos && is_eos {
+                break;
+            }
+        }
+        Ok((out, state))
+    }
 }
