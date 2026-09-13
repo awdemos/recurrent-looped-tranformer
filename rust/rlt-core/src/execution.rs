@@ -147,6 +147,8 @@ impl Rlt {
 
     /// Autoregressive generation (paper §A.2): prefill the prompt, then sample and
     /// consume tokens. Returns sampled tokens (with log-probs) and the final state.
+    /// A sampled EOS is both returned and consumed: the returned state reflects it,
+    /// and its `SampledToken.logprob` stays available for action masking.
     pub fn generate(
         &self,
         prompt: &[u32],

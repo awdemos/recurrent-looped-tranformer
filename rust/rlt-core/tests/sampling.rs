@@ -38,6 +38,40 @@ fn temperature_zero_is_rejected() {
 }
 
 #[test]
+fn top_k_one_is_argmax() {
+    let logits = logits_of(vec![0.5, 2.5, 1.0, -1.0, 2.0]);
+    let s = Sampler::Sample { temperature: 1.3, top_k: Some(1) };
+    for seed in 0..5u64 {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let tok = sample_from_logits(&logits, &s, &mut rng).unwrap();
+        assert_eq!(tok.token, 1, "seed {seed}");
+    }
+}
+
+#[test]
+fn behavior_logprob_matches_untransformed() {
+    let logits = logits_of(vec![1.0, 3.0, 2.0, 0.5]);
+    let lp = log_softmax(&logits, D::Minus1).unwrap().to_vec2::<f32>().unwrap();
+    // temperature 1.0, no top-k: behavior log-prob == model full-vocab log-prob.
+    let untruncated = Sampler::Sample { temperature: 1.0, top_k: None };
+    for tok in 0..4u32 {
+        let got = untruncated.behavior_logprob(&logits, tok).unwrap();
+        assert!(
+            (got - lp[0][tok as usize]).abs() < 1e-5,
+            "tok {tok}: got {got}, want {}",
+            lp[0][tok as usize]
+        );
+    }
+    // top-k truncation: a token outside the candidate set has probability 0.
+    let top1 = Sampler::Sample { temperature: 1.0, top_k: Some(1) };
+    assert_eq!(top1.behavior_logprob(&logits, 2).unwrap(), f32::NEG_INFINITY);
+    // greedy: point mass at the argmax (token 1).
+    let greedy = Sampler::Greedy;
+    assert_eq!(greedy.behavior_logprob(&logits, 1).unwrap(), 0.0);
+    assert_eq!(greedy.behavior_logprob(&logits, 2).unwrap(), f32::NEG_INFINITY);
+}
+
+#[test]
 fn generate_runs_and_stops_at_eos() {
     let cfg = RltConfig {
         d_model: 32, n_heads: 2, d_ff: 64,
