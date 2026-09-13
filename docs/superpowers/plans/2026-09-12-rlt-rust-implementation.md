@@ -18,6 +18,12 @@
 - Norms are unweighted RMSNorm (`NORM_EPS = 1e-5`); all Linear layers bias-free except merge gate bias `b_g` (paper explicit).
 - Positions are 0-based internally; RoPE offset = position index.
 - Paper eq. references: memory Eq. 2.2, merge Eq. 2.9–2.11, decoder block Eq. 2.12–2.16, readout Eq. 2.6.
+- Candle 0.11 API notes (verified by the Task 2 probe in `rust/rlt-core/tests/api_probe.rs`):
+  `softmax`/`log_softmax`/`sigmoid` are free functions in `candle_nn::ops`;
+  `Init::Uniform { lo, up }` (field is `up`, not `hi`); `VarBuilder::get`/`get_with_hints`
+  return `Tensor` directly (NO `.as_tensor()`); `AdamW::new(vars, ParamsAdamW { lr, ..Default::default() })`;
+  mutate a parameter via `model.varmap.data().lock().unwrap().get(name)` (a `Var`) + `.set(&tensor)`;
+  4-D tensor extraction has no `to_vec4` — use the `t4` reshape+`to_vec3` helper in tests.
 - The module tree is wired incrementally: `lib.rs` gains `pub mod` lines and
   re-exports task by task so the workspace builds green at every commit. There is no
   `attention.rs` module — attention primitives live in `nn.rs`.
@@ -695,6 +701,16 @@ use rlt_core::nn::RotaryEmbedding;
 
 fn dev() -> Device { Device::Cpu }
 
+/// 4-D extraction (candle has no `to_vec4`): reshape to 3-D and regroup.
+fn t4(t: &Tensor) -> Vec<Vec<Vec<Vec<f32>>>> {
+    let (a, b, c, d) = t.dims4().unwrap();
+    t.reshape((a * b, c, d)).unwrap()
+        .to_vec3::<f32>().unwrap()
+        .chunks(b)
+        .map(|c| c.to_vec())
+        .collect()
+}
+
 #[test]
 fn rms_norm_matches_manual() {
     let x = Tensor::new(&[[3.0f32, 4.0], &[1.0, 2.0]], &dev()).unwrap();
@@ -711,7 +727,7 @@ fn rope_known_angles() {
     let rotary = RotaryEmbedding::new(4, 8, &dev()).unwrap();
     let x = Tensor::new(&[[[[1.0f32, 0.0, 1.0, 0.0]]]], &dev()).unwrap();
     let (q, _) = rotary.apply_qk(&x, &x, 1).unwrap();
-    let v = q.to_vec4::<f32>().unwrap();
+    let v = t4(&q);
     let (c, s) = (1.0f32.cos(), 1.0f32.sin());
     assert!((v[0][0][0][0] - (c - s)).abs() < 1e-5, "got {}", v[0][0][0][0]);
     assert!(v[0][0][0][1].abs() < 1e-6);
@@ -736,10 +752,10 @@ fn sdpa_matches_naive() {
     let q = Tensor::rand(-1.0f32, 1.0, (1, 2, 3, 4), &d).unwrap();
     let k = Tensor::rand(-1.0f32, 1.0, (1, 2, 5, 4), &d).unwrap();
     let v = Tensor::rand(-1.0f32, 1.0, (1, 2, 5, 4), &d).unwrap();
-    let got = nn::sdpa(&q, &k, &v, None).unwrap().to_vec4::<f32>().unwrap();
-    let qv = q.to_vec4::<f32>().unwrap();
-    let kv = k.to_vec4::<f32>().unwrap();
-    let vv = v.to_vec4::<f32>().unwrap();
+    let got = t4(&nn::sdpa(&q, &k, &v, None).unwrap());
+    let qv = t4(&q);
+    let kv = t4(&k);
+    let vv = t4(&v);
     let scale = 1.0 / 4.0f32.sqrt();
     for h in 0..2 {
         for i in 0..3 {
@@ -768,7 +784,7 @@ fn sdpa_matches_naive() {
 #[test]
 fn causal_mask_blocks_future() {
     let m = nn::causal_mask(3, &dev()).unwrap();
-    let v = m.to_vec4::<f32>().unwrap();
+    let v = t4(&m);
     assert_eq!(v[0][0][0][1], f32::NEG_INFINITY);
     assert_eq!(v[0][0][0][2], f32::NEG_INFINITY);
     assert_eq!(v[0][0][1][2], f32::NEG_INFINITY);
@@ -855,7 +871,7 @@ pub fn sdpa(q: &Tensor, k: &Tensor, v: &Tensor, mask: Option<&Tensor>) -> Result
     if let Some(m) = mask {
         scores = scores.broadcast_add(m)?;
     }
-    scores.softmax(D::Minus1)?.matmul(v)
+    candle_nn::ops::softmax(&scores, D::Minus1)?.matmul(v)
 }
 
 /// Additive causal mask (1, 1, T, T): 0 on/below the diagonal, −∞ above.
@@ -967,9 +983,9 @@ fn linear(vb: VarBuilder, in_dim: usize, out_dim: usize) -> Result<Linear> {
     let weight = vb.get_with_hints(
         (in_dim, out_dim),
         "weight",
-        Init::Uniform { lo: -0.02, hi: 0.02 },
+        Init::Uniform { lo: -0.02, up: 0.02 },
     )?;
-    Ok(Linear::new(weight.as_tensor().clone(), None))
+    Ok(Linear::new(weight, None))
 }
 
 /// One encoder layer: causal MHA (RoPE) + FFN, pre-norm with residuals.
@@ -1080,9 +1096,7 @@ impl Rlt {
         let d = config.d_model;
         let emb = Embedding::new(
             vb.pp("embedding")
-                .get((config.vocab_size, d), "embeddings")?
-                .as_tensor()
-                .clone(),
+                .get((config.vocab_size, d), "embeddings")?,
             d,
         );
         let mut encoder = Vec::with_capacity(config.n_encoder_layers);
@@ -1100,10 +1114,10 @@ impl Rlt {
             mem_v.push(linear(vb.pp(&format!("mem.{g}")), d, d)?);
         }
         let merge_w_g = linear(vb.pp("merge"), 2 * d, d)?;
-        let merge_b_g = vb.pp("merge").get((d,), "b_g")?.as_tensor().clone();
+        let merge_b_g = vb.pp("merge").get((d,), "b_g")?;
         let merge_w_s = linear(vb.pp("merge"), d, d)?;
         let readout = linear(vb.pp("readout"), d, config.vocab_size)?;
-        let s_star = vb.pp("state").get((d,), "s_star")?.as_tensor().clone();
+        let s_star = vb.pp("state").get((d,), "s_star")?;
         let rotary = RotaryEmbedding::new(config.head_dim(), config.max_seq_len, &device)?;
         Ok(Self {
             config,
@@ -1342,11 +1356,9 @@ Also add to `impl Rlt` (same file):
     pub fn merge(&self, e_t: &Tensor, s_prev: &Tensor) -> Result<Tensor> {
         let r = nn::rms_norm(&s_prev.unsqueeze(0)?, NORM_EPS)?; // (1,1,D)
         let both = Tensor::cat(&[e_t, &r], D::Minus1)?; // (1,1,2D)
-        let gate = self
-            .merge_w_g
-            .forward(&both)?
-            .broadcast_add(&self.merge_b_g)?
-            .sigmoid()?;
+        let gate = candle_nn::ops::sigmoid(
+            &self.merge_w_g.forward(&both)?.broadcast_add(&self.merge_b_g)?,
+        )?;
         let feedback = self.merge_w_s.forward(&r)?;
         let scaled = (gate.broadcast_mul(&feedback)?).affine(self.config.feedback_alpha, 0.0)?;
         e_t + scaled
@@ -1607,7 +1619,7 @@ impl Rlt {
                 .collect::<Result<Vec<_>>>()?,
             0,
         )?; // (T-1, V)
-        let logp = stacked.log_softmax(D::Minus1)?;
+        let logp = candle_nn::ops::log_softmax(&stacked, D::Minus1)?;
         let targets = Tensor::from_vec(tokens[1..].to_vec(), (n - 1, 1), &self.device)?;
         let nll = logp.gather(&targets, 1)?.squeeze(1)?.affine(-1.0, 0.0)?; // (T-1,)
         let mask = match loss_mask {
@@ -1665,7 +1677,7 @@ git commit -m "rust(rlt-core): prefill, incremental step, full-BPTT train_step"
 
 ```rust
 use candle_core::{Device, Tensor, Var};
-use candle_nn::{AdamW, Optimizer};
+use candle_nn::{AdamW, Optimizer, ParamsAdamW};
 use rlt_core::{RltConfig, Rlt};
 
 fn tiny_config() -> RltConfig {
@@ -1675,6 +1687,16 @@ fn tiny_config() -> RltConfig {
         window: 2, memory_groups: 1, vocab_size: 258,
         tied: false, feedback_alpha: 0.1, max_seq_len: 32,
     }
+}
+
+/// 4-D extraction (candle has no `to_vec4`): reshape to 3-D and regroup.
+fn t4(t: &Tensor) -> Vec<Vec<Vec<Vec<f32>>>> {
+    let (a, b, c, d) = t.dims4().unwrap();
+    t.reshape((a * b, c, d)).unwrap()
+        .to_vec3::<f32>().unwrap()
+        .chunks(b)
+        .map(|c| c.to_vec())
+        .collect()
 }
 
 /// Finite-difference check of candle backward through rms_norm + sdpa + rope.
@@ -1702,7 +1724,7 @@ fn fd_matches_backprop_on_attention_ops() {
     let analytic_x = grads.get(x.as_tensor()).unwrap().clone();
     let analytic_w = grads.get(w.as_tensor()).unwrap().clone();
     let eps = 1e-3f32;
-    let mut xv = x.as_tensor().to_vec4::<f32>().unwrap();
+    let mut xv = t4(x.as_tensor());
     for idx in [(0usize, 0usize, 0usize, 0usize), (0, 1, 2, 7)] {
         let orig = xv[idx.0][idx.1][idx.2][idx.3];
         xv[idx.0][idx.1][idx.2][idx.3] = orig + eps;
@@ -1711,7 +1733,7 @@ fn fd_matches_backprop_on_attention_ops() {
         let lm = loss_fn(&Tensor::new(xv.clone(), &dev).unwrap(), w.as_tensor());
         xv[idx.0][idx.1][idx.2][idx.3] = orig;
         let fd = (lp.to_scalar::<f32>().unwrap() - lm.to_scalar::<f32>().unwrap()) / (2.0 * eps);
-        let an = analytic_x.to_vec4::<f32>().unwrap()[idx.0][idx.1][idx.2][idx.3];
+        let an = t4(&analytic_x)[idx.0][idx.1][idx.2][idx.3];
         assert!((fd - an).abs() < 5e-3, "x{idx:?}: fd={fd} analytic={an}");
     }
     let mut wv = w.as_tensor().to_vec2::<f32>().unwrap();
@@ -1806,7 +1828,11 @@ fn masking_reweights_only_the_loss() {
 #[test]
 fn train_step_decreases_loss() {
     let model = Rlt::new(tiny_config(), Device::Cpu).unwrap();
-    let mut opt = AdamW::new(0.01, model.varmap.all_vars()).unwrap();
+    let mut opt = AdamW::new(
+        model.varmap.all_vars(),
+        ParamsAdamW { lr: 0.01, ..Default::default() },
+    )
+    .unwrap();
     let tokens: Vec<u32> = vec![42u32; 12];
     let first = model.train_step(&tokens, None, &mut opt).unwrap();
     let mut last = first;
@@ -2188,8 +2214,7 @@ pub fn replay(model: &Rlt, rollout: &Rollout) -> Result<ReplayResult> {
     let mut ratios: Vec<f32> = Vec::new();
     for (i, &tok) in rollout.response_tokens.iter().enumerate() {
         let logits = model.logits(&state.s)?; // (1,V)
-        let lp = logits
-            .log_softmax(D::Minus1)?
+        let lp = candle_nn::ops::log_softmax(&logits, D::Minus1)?
             .gather(&Tensor::new(&[tok], &model.device)?.unsqueeze(1)?, 1)?
             .squeeze(1)?; // (1,)
         if rollout.action_mask[i] {
@@ -2516,7 +2541,10 @@ fn main() -> Result<()> {
                 Some(p) => load_checkpoint(&p, Device::Cpu)?,
                 None => Rlt::new(RltConfig::default(), Device::Cpu)?,
             };
-            let mut opt = candle_nn::AdamW::new(lr, model.varmap.all_vars())?;
+            let mut opt = candle_nn::AdamW::new(
+                model.varmap.all_vars(),
+                candle_nn::ParamsAdamW { lr, ..Default::default() },
+            )?;
             let windows: Vec<Vec<u32>> = tokens
                 .chunks(seq_len)
                 .filter(|c| c.len() >= 2)
