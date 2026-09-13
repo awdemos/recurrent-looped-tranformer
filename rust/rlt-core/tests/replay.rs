@@ -58,3 +58,54 @@ fn replay_rejects_bad_shapes() {
     };
     assert!(replay(&model, &rollout).is_err());
 }
+
+#[test]
+fn replay_rejects_no_action_tokens() {
+    let model = Rlt::new(tiny_config(), Device::Cpu).unwrap();
+    let rollout = Rollout {
+        prompt_tokens: vec![1, 2],
+        response_tokens: vec![3, 4],
+        action_mask: vec![false, false],
+        behavior_logprobs: vec![0.0, 0.0],
+        sampling: rlt_core::SamplingMetadata { temperature: 1.0, top_k: None, seed: 0 },
+    };
+    assert!(replay(&model, &rollout).is_err());
+}
+
+/// The replay result is fully differentiable: a surrogate-style loss through
+/// current_logprobs reaches ALL parameters, including prompt-path embeddings
+/// (paper §A.4: replay must differentiate through external-token updates too).
+#[test]
+fn replay_logprobs_support_full_backward() {
+    let model = Rlt::new(tiny_config(), Device::Cpu).unwrap();
+    let mut rng = StdRng::seed_from_u64(3);
+    let prompt = vec![8u32, 7, 6];
+    let (sampled, _) = model.generate(&prompt, 4, &Sampler::Greedy, &mut rng, false).unwrap();
+    let response: Vec<u32> = sampled.iter().map(|t| t.token).collect();
+    let behavior: Vec<f32> = sampled.iter().map(|t| t.logprob).collect();
+    let rollout = Rollout {
+        prompt_tokens: prompt.clone(),
+        response_tokens: response.clone(),
+        action_mask: vec![true, false, true, true], // external token in the middle
+        behavior_logprobs: behavior.clone(),
+        sampling: rlt_core::SamplingMetadata { temperature: 0.0, top_k: None, seed: 3 },
+    };
+    let result = replay(&model, &rollout).unwrap();
+    // surrogate: sum over action logprobs (importance ratios enter as detached
+    // constants in the real surrogate, so a plain sum exercises the same graph)
+    let loss = result.current_logprobs.sum_all().unwrap();
+    let grads = loss.backward().unwrap();
+    let vars = model.varmap.all_vars();
+    let missing = vars.iter().filter(|v| grads.get(v.as_tensor()).is_none()).count();
+    assert_eq!(missing, 0, "some parameters received no gradient through replay");
+    // at least one gradient must be non-zero (a connected-but-zero graph would pass above)
+    let any_nonzero = vars.iter().any(|v| {
+        grads
+            .get(v.as_tensor())
+            .unwrap()
+            .abs().unwrap().max_all().unwrap()
+            .to_scalar::<f32>().unwrap()
+            > 0.0
+    });
+    assert!(any_nonzero, "all replay gradients are zero");
+}
