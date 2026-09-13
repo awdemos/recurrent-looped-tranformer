@@ -198,7 +198,9 @@ Byte-level tokenizer (256 vocab + BOS/EOS) keeps everything self-contained.
 
 1. **Prefill ≡ incremental** (Prop. 3.1): identical tokens → logits match ≤ 1e-4 (fp32).
 2. **Causality** (Prop. B.1): mutating token at position j changes no logit < j.
-3. **SWA eviction**: logits at t depend only on decoder positions ≥ t−W+1.
+3. **SWA cache semantics** (§2.3–2.5): after processing n tokens, each decoder layer
+   cache holds exactly `min(W−1, n)` historical positions (W=1 ⇒ permanently empty),
+   and prefill≡incremental equivalence holds at small W (covers eviction correctness).
 4. **Gradient check**: central finite differences vs. candle backward agree ≤ 1e-3
    on merge params (W_g, b_g, W_s, α-adjacent) and one attention projection.
 5. **Masking**: SFT mask alters loss; logits/state of later positions unchanged
