@@ -8,8 +8,10 @@
 
 pub mod config;
 pub mod error;
+pub mod state;
 pub mod tokenizer;
 
 pub use config::RltConfig;
 pub use error::{Result, RltError};
+pub use state::{GroupKv, LayerKv, RltState};
 pub use tokenizer::{ByteTokenizer, BOS_ID, EOS_ID, MIN_VOCAB};
