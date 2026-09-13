@@ -287,6 +287,25 @@ fn rejects_invalid() {
 }
 
 #[test]
+fn rejects_degenerate_dimensions() {
+    let mut cfg = RltConfig::default();
+    cfg.n_heads = 0; // would divide by zero without an explicit guard
+    assert!(cfg.validate().is_err());
+    let mut cfg = RltConfig::default();
+    cfg.tied = true;
+    cfg.n_encoder_layers = 2;
+    cfg.n_decoder_layers = 3; // tied requires L_D <= L_E
+    assert!(cfg.validate().is_err());
+    let mut cfg = RltConfig::default();
+    cfg.d_model = 18;
+    cfg.n_heads = 2; // head_dim 9 is odd (RoPE requirement)
+    assert!(cfg.validate().is_err());
+    let mut cfg = RltConfig::default();
+    cfg.feedback_alpha = f64::NAN;
+    assert!(cfg.validate().is_err());
+}
+
+#[test]
 fn memory_group_mapping() {
     let cfg = RltConfig { memory_groups: 3, n_decoder_layers: 7, ..Default::default() };
     assert_eq!(cfg.memory_group_of(0), 0);
@@ -399,6 +418,9 @@ impl RltConfig {
     /// Validate structural invariants.
     pub fn validate(&self) -> Result<()> {
         let err = |m: &str| RltError::Config(m.to_string());
+        if self.n_heads == 0 {
+            return Err(err("n_heads must be >= 1"));
+        }
         if self.d_model == 0 || self.d_model % self.n_heads != 0 {
             return Err(err("n_heads must divide d_model"));
         }
@@ -426,15 +448,22 @@ impl RltConfig {
         if self.head_dim() % 2 != 0 {
             return Err(err("head_dim must be even (RoPE requirement)"));
         }
+        if !self.feedback_alpha.is_finite() {
+            return Err(err("feedback_alpha must be finite"));
+        }
         Ok(())
     }
 
     /// Per-head width.
+    ///
+    /// Panics if `n_heads == 0`; call [`RltConfig::validate`] first.
     pub fn head_dim(&self) -> usize {
         self.d_model / self.n_heads
     }
 
     /// Memory group read by decoder layer `layer` (paper: layer ℓ reads group g(ℓ)).
+    ///
+    /// Panics if `memory_groups == 0`; call [`RltConfig::validate`] first.
     pub fn memory_group_of(&self, layer: usize) -> usize {
         layer % self.memory_groups
     }
@@ -2735,7 +2764,7 @@ git commit -m "rust: crate READMEs"
 - [ ] **Step 1: Full test suite**
 
 Run: `cd rust && cargo test --workspace 2>&1 | tail -25`
-Expected: all suites `ok` — api_probe (2), config (3), tokenizer (3), nn (5),
+Expected: all suites `ok` — api_probe (2), config (4), tokenizer (3), nn (5),
 encoder (1), execution (4), gradients (5), sampling (4), replay (2), checkpoint (2),
 cli (1). Failures must be fixed, never skipped.
 
