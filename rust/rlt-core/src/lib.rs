@@ -16,6 +16,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod checkpoint;
 pub mod config;
 pub mod error;
 pub mod execution;
@@ -27,6 +28,7 @@ pub mod state;
 pub mod tokenizer;
 
 pub use candle_core::{Device, Tensor};
+pub use checkpoint::{load_checkpoint, save_checkpoint};
 pub use config::RltConfig;
 pub use error::{Result, RltError};
 pub use model::Rlt;
