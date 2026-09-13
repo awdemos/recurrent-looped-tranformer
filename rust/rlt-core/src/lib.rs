@@ -5,3 +5,10 @@
 //! complete state `H_t = (s_t, C_t^D)` (recurrent output + per-layer SWA caches)
 //! across every prompt and response token. See `Recurrent_Looped_Transformer.pdf`
 //! (Zhang, 2026) for the reference semantics.
+
+pub mod config;
+pub mod error;
+pub mod tokenizer;
+
+pub use config::RltConfig;
+pub use error::{Result, RltError};
