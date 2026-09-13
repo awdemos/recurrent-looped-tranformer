@@ -8,6 +8,7 @@
 
 pub mod config;
 pub mod error;
+pub mod nn;
 pub mod state;
 pub mod tokenizer;
 
