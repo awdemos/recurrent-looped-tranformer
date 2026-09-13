@@ -5,10 +5,17 @@ use rlt_core::{replay, Rlt, RltConfig, Rollout, Sampler};
 
 fn tiny_config() -> RltConfig {
     RltConfig {
-        d_model: 32, n_heads: 2, d_ff: 64,
-        n_encoder_layers: 2, n_decoder_layers: 2,
-        window: 3, memory_groups: 1, vocab_size: 258,
-        tied: false, feedback_alpha: 0.1, max_seq_len: 64,
+        d_model: 32,
+        n_heads: 2,
+        d_ff: 64,
+        n_encoder_layers: 2,
+        n_decoder_layers: 2,
+        window: 3,
+        memory_groups: 1,
+        vocab_size: 258,
+        tied: false,
+        feedback_alpha: 0.1,
+        max_seq_len: 64,
     }
 }
 
@@ -29,7 +36,11 @@ fn replay_ratios_are_one_at_same_params() {
         response_tokens: response.clone(),
         action_mask: mask.clone(),
         behavior_logprobs: behavior.clone(),
-        sampling: rlt_core::SamplingMetadata { temperature: 0.0, top_k: None, seed: 7 },
+        sampling: rlt_core::SamplingMetadata {
+            temperature: 0.0,
+            top_k: None,
+            seed: 7,
+        },
     };
     let result = replay(&model, &rollout).unwrap();
     assert_eq!(result.ratios.len(), mask.iter().filter(|&&m| m).count());
@@ -54,7 +65,11 @@ fn replay_rejects_bad_shapes() {
         response_tokens: vec![3, 4],
         action_mask: vec![true],
         behavior_logprobs: vec![0.0, 0.0],
-        sampling: rlt_core::SamplingMetadata { temperature: 1.0, top_k: None, seed: 0 },
+        sampling: rlt_core::SamplingMetadata {
+            temperature: 1.0,
+            top_k: None,
+            seed: 0,
+        },
     };
     assert!(replay(&model, &rollout).is_err());
 }
@@ -67,7 +82,11 @@ fn replay_rejects_no_action_tokens() {
         response_tokens: vec![3, 4],
         action_mask: vec![false, false],
         behavior_logprobs: vec![0.0, 0.0],
-        sampling: rlt_core::SamplingMetadata { temperature: 1.0, top_k: None, seed: 0 },
+        sampling: rlt_core::SamplingMetadata {
+            temperature: 1.0,
+            top_k: None,
+            seed: 0,
+        },
     };
     assert!(replay(&model, &rollout).is_err());
 }
@@ -80,7 +99,9 @@ fn replay_logprobs_support_full_backward() {
     let model = Rlt::new(tiny_config(), Device::Cpu).unwrap();
     let mut rng = StdRng::seed_from_u64(3);
     let prompt = vec![8u32, 7, 6];
-    let (sampled, _) = model.generate(&prompt, 4, &Sampler::Greedy, &mut rng, false).unwrap();
+    let (sampled, _) = model
+        .generate(&prompt, 4, &Sampler::Greedy, &mut rng, false)
+        .unwrap();
     let response: Vec<u32> = sampled.iter().map(|t| t.token).collect();
     let behavior: Vec<f32> = sampled.iter().map(|t| t.logprob).collect();
     let rollout = Rollout {
@@ -88,7 +109,11 @@ fn replay_logprobs_support_full_backward() {
         response_tokens: response.clone(),
         action_mask: vec![true, false, true, true], // external token in the middle
         behavior_logprobs: behavior.clone(),
-        sampling: rlt_core::SamplingMetadata { temperature: 0.0, top_k: None, seed: 3 },
+        sampling: rlt_core::SamplingMetadata {
+            temperature: 0.0,
+            top_k: None,
+            seed: 3,
+        },
     };
     let result = replay(&model, &rollout).unwrap();
     // surrogate: sum over action logprobs (importance ratios enter as detached
@@ -96,15 +121,25 @@ fn replay_logprobs_support_full_backward() {
     let loss = result.current_logprobs.sum_all().unwrap();
     let grads = loss.backward().unwrap();
     let vars = model.varmap.all_vars();
-    let missing = vars.iter().filter(|v| grads.get(v.as_tensor()).is_none()).count();
-    assert_eq!(missing, 0, "some parameters received no gradient through replay");
+    let missing = vars
+        .iter()
+        .filter(|v| grads.get(v.as_tensor()).is_none())
+        .count();
+    assert_eq!(
+        missing, 0,
+        "some parameters received no gradient through replay"
+    );
     // at least one gradient must be non-zero (a connected-but-zero graph would pass above)
     let any_nonzero = vars.iter().any(|v| {
         grads
             .get(v.as_tensor())
             .unwrap()
-            .abs().unwrap().max_all().unwrap()
-            .to_scalar::<f32>().unwrap()
+            .abs()
+            .unwrap()
+            .max_all()
+            .unwrap()
+            .to_scalar::<f32>()
+            .unwrap()
             > 0.0
     });
     assert!(any_nonzero, "all replay gradients are zero");

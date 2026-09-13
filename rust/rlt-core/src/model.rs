@@ -1,6 +1,6 @@
 //! The RLT model: encoder stack, decoder stack, merge, readout.
 
-use candle_core::{D, Device, DType, Tensor};
+use candle_core::{DType, Device, Tensor, D};
 use candle_nn::{Embedding, Init, Linear, Module, VarBuilder, VarMap};
 
 use crate::config::RltConfig;
@@ -14,7 +14,10 @@ fn linear(vb: VarBuilder, in_dim: usize, out_dim: usize) -> Result<Linear> {
     let weight = vb.get_with_hints(
         (out_dim, in_dim),
         "weight",
-        Init::Uniform { lo: -0.02, up: 0.02 },
+        Init::Uniform {
+            lo: -0.02,
+            up: 0.02,
+        },
     )?;
     Ok(Linear::new(weight, None))
 }
@@ -131,7 +134,10 @@ impl Rlt {
                 "embeddings",
                 // candle 0.11 `Init::default()` is `Const(0)`: an implicit `get`
                 // here would leave the model input-independent.
-                Init::Uniform { lo: -0.02, up: 0.02 },
+                Init::Uniform {
+                    lo: -0.02,
+                    up: 0.02,
+                },
             )?,
             d,
         );
@@ -141,7 +147,12 @@ impl Rlt {
         }
         let mut decoder = Vec::with_capacity(config.n_decoder_layers);
         for l in 0..config.n_decoder_layers {
-            decoder.push(DecoderBlock::new(&config, l, &encoder, vb.pp(format!("decoder.{l}")))?);
+            decoder.push(DecoderBlock::new(
+                &config,
+                l,
+                &encoder,
+                vb.pp(format!("decoder.{l}")),
+            )?);
         }
         let mut mem_k = Vec::with_capacity(config.memory_groups);
         let mut mem_v = Vec::with_capacity(config.memory_groups);
@@ -150,10 +161,14 @@ impl Rlt {
             mem_v.push(linear(vb.pp(format!("mem.{g}.v")), d, d)?);
         }
         let merge_w_g = linear(vb.pp("merge.w_g"), 2 * d, d)?;
-        let merge_b_g = vb.pp("merge").get_with_hints((d,), "b_g", Init::Const(0.))?;
+        let merge_b_g = vb
+            .pp("merge")
+            .get_with_hints((d,), "b_g", Init::Const(0.))?;
         let merge_w_s = linear(vb.pp("merge.w_s"), d, d)?;
         let readout = linear(vb.pp("readout"), d, config.vocab_size)?;
-        let s_star = vb.pp("state").get_with_hints((d,), "s_star", Init::Const(0.))?;
+        let s_star = vb
+            .pp("state")
+            .get_with_hints((d,), "s_star", Init::Const(0.))?;
         let rotary = RotaryEmbedding::new(config.head_dim(), config.max_seq_len, &device)?;
         Ok(Self {
             config,
@@ -184,14 +199,8 @@ impl Rlt {
         let normed = nn::rms_norm(e, NORM_EPS)?;
         let mut out = Vec::with_capacity(self.config.memory_groups);
         for g in 0..self.config.memory_groups {
-            let k = nn::split_heads(
-                &self.mem_k[g].forward(&normed)?,
-                self.config.n_heads,
-            )?;
-            let v = nn::split_heads(
-                &self.mem_v[g].forward(&normed)?,
-                self.config.n_heads,
-            )?;
+            let k = nn::split_heads(&self.mem_k[g].forward(&normed)?, self.config.n_heads)?;
+            let v = nn::split_heads(&self.mem_v[g].forward(&normed)?, self.config.n_heads)?;
             let (k, _) = self.rotary.apply_qk(&k, &k, 0)?;
             out.push(GroupKv { k, v });
         }
@@ -268,7 +277,10 @@ impl Rlt {
         let r = nn::rms_norm(&s_prev.unsqueeze(0)?, NORM_EPS)?; // (1,1,D)
         let both = Tensor::cat(&[e_t, &r], D::Minus1)?; // (1,1,2D)
         let gate = candle_nn::ops::sigmoid(
-            &self.merge_w_g.forward(&both)?.broadcast_add(&self.merge_b_g)?,
+            &self
+                .merge_w_g
+                .forward(&both)?
+                .broadcast_add(&self.merge_b_g)?,
         )?;
         let feedback = self.merge_w_s.forward(&r)?;
         let scaled = (gate.broadcast_mul(&feedback)?).affine(self.config.feedback_alpha, 0.0)?;
@@ -291,7 +303,13 @@ impl Rlt {
                 k: state.memory[g].k.narrow(2, 0, mem_len)?,
                 v: state.memory[g].v.narrow(2, 0, mem_len)?,
             };
-            z = blk.step(&z, &self.rotary, state.position, &mut state.decoder[l], &mem)?;
+            z = blk.step(
+                &z,
+                &self.rotary,
+                state.position,
+                &mut state.decoder[l],
+                &mem,
+            )?;
         }
         Ok(z.squeeze(0)?)
     }

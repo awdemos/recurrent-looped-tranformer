@@ -6,7 +6,7 @@
 //! prompt recurrence, no stale caches, no detach — and forms token ratios
 //! `r_i = exp(log p_Θ − log µ)` for policy actions only.
 
-use candle_core::{D, Tensor};
+use candle_core::{Tensor, D};
 
 use crate::model::Rlt;
 use crate::{Result, RltError};
@@ -89,5 +89,8 @@ pub fn replay(model: &Rlt, rollout: &Rollout) -> Result<ReplayResult> {
     if cur_logp.is_empty() {
         return Err(RltError::Replay("rollout has no action tokens".into()));
     }
-    Ok(ReplayResult { current_logprobs: Tensor::stack(&cur_logp, 0)?, ratios })
+    Ok(ReplayResult {
+        current_logprobs: Tensor::stack(&cur_logp, 0)?,
+        ratios,
+    })
 }

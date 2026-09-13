@@ -1,6 +1,6 @@
 //! Tensor-level primitives: RMSNorm, rotary embeddings, attention.
 
-use candle_core::{bail, D, Device, Result, Tensor};
+use candle_core::{bail, Device, Result, Tensor, D};
 
 /// RMSNorm epsilon used throughout the model.
 pub const NORM_EPS: f32 = 1e-5;
@@ -29,7 +29,7 @@ pub struct RotaryEmbedding {
 impl RotaryEmbedding {
     /// Build tables for `dim` channels (must be positive even) up to `max_seq_len`.
     pub fn new(dim: usize, max_seq_len: usize, device: &Device) -> Result<Self> {
-        if dim == 0 || dim % 2 != 0 {
+        if dim == 0 || !dim.is_multiple_of(2) {
             bail!("rotary dim must be a positive even number, got {dim}");
         }
         let base = 10_000f32;
@@ -37,17 +37,28 @@ impl RotaryEmbedding {
             .map(|i| base.powf(-(i as f32) * 2.0 / dim as f32))
             .collect();
         let inv_freq = Tensor::from_vec(inv_freq, (dim / 2,), device)?;
-        let pos = Tensor::arange(0u32, max_seq_len as u32, device)?
-            .to_dtype(candle_core::DType::F32)?;
+        let pos =
+            Tensor::arange(0u32, max_seq_len as u32, device)?.to_dtype(candle_core::DType::F32)?;
         let freqs = pos.unsqueeze(1)?.broadcast_mul(&inv_freq.unsqueeze(0)?)?; // (S, dim/2)
-        Ok(Self { cos: freqs.cos()?, sin: freqs.sin()? })
+        Ok(Self {
+            cos: freqs.cos()?,
+            sin: freqs.sin()?,
+        })
     }
 
     /// Apply rotation to a single tensor (B, H, S, D) at absolute `offset`.
     pub fn apply(&self, x: &Tensor, offset: usize) -> Result<Tensor> {
         let seq = x.dim(2)?;
-        let cos = self.cos.narrow(0, offset, seq)?.unsqueeze(0)?.unsqueeze(0)?;
-        let sin = self.sin.narrow(0, offset, seq)?.unsqueeze(0)?.unsqueeze(0)?;
+        let cos = self
+            .cos
+            .narrow(0, offset, seq)?
+            .unsqueeze(0)?
+            .unsqueeze(0)?;
+        let sin = self
+            .sin
+            .narrow(0, offset, seq)?
+            .unsqueeze(0)?
+            .unsqueeze(0)?;
         let cos = Tensor::cat(&[&cos, &cos], D::Minus1)?; // (1,1,S,D)
         let sin = Tensor::cat(&[&sin, &sin], D::Minus1)?;
         x.broadcast_mul(&cos)?
@@ -64,6 +75,9 @@ impl RotaryEmbedding {
 ///
 /// `q`: (B, H, Sq, D); `k`, `v`: (B, H, Sk, D). `mask` is an additive broadcastable
 /// tensor (e.g. (1,1,Sq,Sk) from [`causal_mask`]), or `None` when every key is valid.
+///
+/// Precondition: no mask row may be entirely −∞ (softmax would produce NaN);
+/// [`causal_mask`] always satisfies this.
 pub fn sdpa(q: &Tensor, k: &Tensor, v: &Tensor, mask: Option<&Tensor>) -> Result<Tensor> {
     let d = q.dim(D::Minus1)? as f64;
     let mut scores = q.matmul(&k.transpose(D::Minus2, D::Minus1)?)?;
@@ -79,8 +93,8 @@ pub fn causal_mask(t: usize, device: &Device) -> Result<Tensor> {
     let mut rows = Vec::with_capacity(t);
     for i in 0..t {
         let mut row = vec![0f32; t];
-        for j in (i + 1)..t {
-            row[j] = f32::NEG_INFINITY;
+        for x in row.iter_mut().skip(i + 1) {
+            *x = f32::NEG_INFINITY;
         }
         rows.push(row);
     }

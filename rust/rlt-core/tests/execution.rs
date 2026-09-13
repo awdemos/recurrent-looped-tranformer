@@ -18,7 +18,14 @@ fn tiny_config() -> RltConfig {
 }
 
 fn max_diff(a: &candle_core::Tensor, b: &candle_core::Tensor) -> f32 {
-    (a - b).unwrap().abs().unwrap().max_all().unwrap().to_scalar::<f32>().unwrap()
+    (a - b)
+        .unwrap()
+        .abs()
+        .unwrap()
+        .max_all()
+        .unwrap()
+        .to_scalar::<f32>()
+        .unwrap()
 }
 
 /// Paper Proposition 3.1: prefill ≡ incremental step-by-step execution.
@@ -82,5 +89,8 @@ fn generation_continues_state() {
     let next = model.step(42, &mut state).unwrap();
     let (full, _) = model.prefill(&[9, 8, 7, 42]).unwrap();
     let d2 = max_diff(&next, &full[3]);
-    assert!(d2 < 1e-4, "step after prefill diverged from full prefill: {d2}");
+    assert!(
+        d2 < 1e-4,
+        "step after prefill diverged from full prefill: {d2}"
+    );
 }

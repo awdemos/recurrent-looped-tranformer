@@ -35,7 +35,11 @@ impl Sampler {
         match self {
             Sampler::Greedy => {
                 let (idx, _) = argmax(&v)?;
-                Ok(if idx as u32 == token { 0.0 } else { f32::NEG_INFINITY })
+                Ok(if idx as u32 == token {
+                    0.0
+                } else {
+                    f32::NEG_INFINITY
+                })
             }
             Sampler::Sample { temperature, top_k } => {
                 check_temperature(*temperature)?;
@@ -77,7 +81,10 @@ pub fn sample_from_logits(
     match sampler {
         Sampler::Greedy => {
             let (idx, _) = argmax(&v)?;
-            Ok(SampledToken { token: idx as u32, logprob: logp_full[idx] })
+            Ok(SampledToken {
+                token: idx as u32,
+                logprob: logp_full[idx],
+            })
         }
         Sampler::Sample { temperature, top_k } => {
             check_temperature(*temperature)?;
@@ -91,18 +98,26 @@ pub fn sample_from_logits(
             for (j, &(tok, _)) in cand.iter().enumerate() {
                 acc += f64::from(probs[j]);
                 if r <= acc {
-                    return Ok(SampledToken { token: tok, logprob: logp_full[tok as usize] });
+                    return Ok(SampledToken {
+                        token: tok,
+                        logprob: logp_full[tok as usize],
+                    });
                 }
             }
             let (tok, _) = cand[cand.len() - 1];
-            Ok(SampledToken { token: tok, logprob: logp_full[tok as usize] })
+            Ok(SampledToken {
+                token: tok,
+                logprob: logp_full[tok as usize],
+            })
         }
     }
 }
 
 fn check_temperature(temperature: f32) -> Result<()> {
     if !temperature.is_finite() || temperature <= 0.0 {
-        return Err(RltError::Config("sampling temperature must be finite and > 0".into()));
+        return Err(RltError::Config(
+            "sampling temperature must be finite and > 0".into(),
+        ));
     }
     Ok(())
 }

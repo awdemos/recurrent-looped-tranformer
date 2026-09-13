@@ -1,5 +1,5 @@
 use candle_core::Device;
-use rlt_core::{RltConfig, Rlt};
+use rlt_core::{Rlt, RltConfig};
 
 fn tiny_config() -> RltConfig {
     RltConfig {
@@ -31,8 +31,18 @@ fn encode_parallel_matches_incremental() {
         e_steps.push(e_t.squeeze(0).unwrap());
     }
     let e_inc = candle_core::Tensor::stack(&e_steps, 0).unwrap();
-    let diff = (e - e_inc).unwrap().abs().unwrap().max_all().unwrap().to_scalar::<f32>().unwrap();
-    assert!(diff < 1e-4, "parallel vs incremental encoder mismatch: {diff}");
+    let diff = (e - e_inc)
+        .unwrap()
+        .abs()
+        .unwrap()
+        .max_all()
+        .unwrap()
+        .to_scalar::<f32>()
+        .unwrap();
+    assert!(
+        diff < 1e-4,
+        "parallel vs incremental encoder mismatch: {diff}"
+    );
     for c in enc_cache.iter().flatten() {
         assert_eq!(c.len(), tokens.len());
     }

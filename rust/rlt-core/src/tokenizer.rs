@@ -17,6 +17,11 @@ pub struct ByteTokenizer {
 
 impl ByteTokenizer {
     /// Create a tokenizer; `vocab_size` must be >= [`MIN_VOCAB`].
+    ///
+    /// The byte-level scheme is fixed at [`MIN_VOCAB`] ids: with a larger
+    /// `vocab_size`, ids 258..vocab_size are never produced by
+    /// [`ByteTokenizer::encode`] (dead ids reserved for a future text-level
+    /// vocabulary extension).
     pub fn new(vocab_size: usize) -> Result<Self> {
         if vocab_size < MIN_VOCAB {
             return Err(RltError::Token(format!(
@@ -39,8 +44,9 @@ impl ByteTokenizer {
         ids
     }
 
-    /// Decode token ids back to text; special tokens (>= 256) are skipped and
-    /// invalid ids are replaced with the replacement character.
+    /// Decode token ids back to text. Special tokens (ids >= 256) are skipped.
+    /// Bytes that do not form valid UTF-8 decode as the replacement character
+    /// (lossy decoding).
     pub fn decode(&self, tokens: &[u32]) -> String {
         let bytes: Vec<u8> = tokens
             .iter()

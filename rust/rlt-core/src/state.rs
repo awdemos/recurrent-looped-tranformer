@@ -59,6 +59,11 @@ impl GroupKv {
         self.k.dim(2).unwrap_or(0)
     }
 
+    /// True when the group holds no memory positions.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Append one position.
     pub fn appended(&self, k: &Tensor, v: &Tensor) -> Result<Self> {
         Ok(Self {

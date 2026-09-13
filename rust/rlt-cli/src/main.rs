@@ -3,14 +3,18 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
 use candle_nn::Optimizer;
-use rlt_core::{load_checkpoint, save_checkpoint, ByteTokenizer, Device, Rlt, RltConfig, Sampler};
+use clap::{Parser, Subcommand};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rlt_core::{load_checkpoint, save_checkpoint, ByteTokenizer, Device, Rlt, RltConfig, Sampler};
 
 #[derive(Parser)]
-#[command(name = "rlt", version, about = "Recurrent Looped Transformer (RLT) CLI")]
+#[command(
+    name = "rlt",
+    version,
+    about = "Recurrent Looped Transformer (RLT) CLI"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -59,7 +63,7 @@ enum Commands {
         /// Sequence window length (independent segments, paper §5.1).
         #[arg(long, default_value_t = 128)]
         seq_len: usize,
-        /// Windows per optimizer step (loss-averaged).
+        /// Windows per optimizer step (loss-averaged; windows are reused cyclically when batch > available windows).
         #[arg(long, default_value_t = 1)]
         batch: usize,
         /// Print loss every N steps.
@@ -92,7 +96,14 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { out, d_model, layers, heads, window, untied } => {
+        Commands::Init {
+            out,
+            d_model,
+            layers,
+            heads,
+            window,
+            untied,
+        } => {
             let cfg = RltConfig {
                 d_model,
                 n_heads: heads,
@@ -107,7 +118,17 @@ fn main() -> Result<()> {
             save_checkpoint(&model, &out)?;
             println!("wrote {}", out.display());
         }
-        Commands::Train { corpus, init, out, steps, lr, seq_len, batch, log_every } => {
+        Commands::Train {
+            corpus,
+            init,
+            out,
+            steps,
+            lr,
+            seq_len,
+            batch,
+            log_every,
+        } => {
+            anyhow::ensure!(log_every >= 1, "--log-every must be >= 1");
             let text = std::fs::read_to_string(&corpus)
                 .with_context(|| format!("reading {}", corpus.display()))?;
             let tok = ByteTokenizer::new(rlt_core::MIN_VOCAB)?;
@@ -118,18 +139,25 @@ fn main() -> Result<()> {
             };
             let mut opt = candle_nn::AdamW::new(
                 model.varmap.all_vars(),
-                candle_nn::ParamsAdamW { lr, ..Default::default() },
+                candle_nn::ParamsAdamW {
+                    lr,
+                    ..Default::default()
+                },
             )?;
             let windows: Vec<Vec<u32>> = tokens
                 .chunks(seq_len)
                 .filter(|c| c.len() >= 2)
                 .map(|c| c.to_vec())
                 .collect();
-            anyhow::ensure!(!windows.is_empty(), "corpus too short for seq-len {seq_len}");
+            anyhow::ensure!(
+                !windows.is_empty(),
+                "corpus too short for seq-len {seq_len}"
+            );
             let mut step = 0;
             while step < steps {
-                let group: Vec<&Vec<u32>> =
-                    (0..batch).map(|b| &windows[(step + b) % windows.len()]).collect();
+                let group: Vec<&Vec<u32>> = (0..batch)
+                    .map(|b| &windows[(step + b) % windows.len()])
+                    .collect();
                 let loss = if group.len() == 1 {
                     model.forward_loss(group[0], None)?
                 } else {
@@ -149,17 +177,28 @@ fn main() -> Result<()> {
             save_checkpoint(&model, &out)?;
             println!("wrote {}", out.display());
         }
-        Commands::Generate { model, prompt, max_tokens, temperature, top_k, seed } => {
+        Commands::Generate {
+            model,
+            prompt,
+            max_tokens,
+            temperature,
+            top_k,
+            seed,
+        } => {
             let model = load_checkpoint(&model, Device::Cpu)?;
             let tok = ByteTokenizer::new(rlt_core::MIN_VOCAB)?;
             let prompt_tokens = tok.encode(&prompt, true, false);
             let sampler = if temperature <= 0.0 {
                 Sampler::Greedy
             } else {
-                Sampler::Sample { temperature: temperature as f32, top_k }
+                Sampler::Sample {
+                    temperature: temperature as f32,
+                    top_k,
+                }
             };
             let mut rng = StdRng::seed_from_u64(seed);
-            let (sampled, _) = model.generate(&prompt_tokens, max_tokens, &sampler, &mut rng, true)?;
+            let (sampled, _) =
+                model.generate(&prompt_tokens, max_tokens, &sampler, &mut rng, true)?;
             let ids: Vec<u32> = sampled.iter().map(|t| t.token).collect();
             let logprob_sum: f64 = sampled.iter().map(|t| t.logprob as f64).sum();
             println!("{}", tok.decode(&ids));

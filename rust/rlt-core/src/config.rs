@@ -60,14 +60,16 @@ impl RltConfig {
         if self.n_heads == 0 {
             return Err(err("n_heads must be >= 1"));
         }
-        if self.d_model == 0 || self.d_model % self.n_heads != 0 {
+        if self.d_model == 0 || !self.d_model.is_multiple_of(self.n_heads) {
             return Err(err("n_heads must divide d_model"));
         }
         if self.n_encoder_layers == 0 || self.n_decoder_layers == 0 {
             return Err(err("layer counts must be >= 1"));
         }
         if self.n_decoder_layers > self.n_encoder_layers && self.tied {
-            return Err(err("tied config requires n_decoder_layers <= n_encoder_layers"));
+            return Err(err(
+                "tied config requires n_decoder_layers <= n_encoder_layers",
+            ));
         }
         if self.window == 0 {
             return Err(err("window must be >= 1"));
@@ -84,7 +86,7 @@ impl RltConfig {
         if self.max_seq_len == 0 {
             return Err(err("max_seq_len must be >= 1"));
         }
-        if self.head_dim() % 2 != 0 {
+        if !self.head_dim().is_multiple_of(2) {
             return Err(err("head_dim must be even (RoPE requirement)"));
         }
         if !self.feedback_alpha.is_finite() {

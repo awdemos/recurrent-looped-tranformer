@@ -1,6 +1,6 @@
 //! Execution paths (paper §2.3–2.5, App. A): prefill, incremental step, training.
 
-use candle_core::{D, Tensor};
+use candle_core::{Tensor, D};
 use candle_nn::{AdamW, Module, Optimizer};
 
 use crate::model::Rlt;
@@ -30,7 +30,9 @@ impl Rlt {
         let mut logits = Vec::with_capacity(tokens.len());
         for i in 0..tokens.len() {
             if state.position >= self.config.max_seq_len {
-                return Err(RltError::State("max_seq_len exceeded during prefill".into()));
+                return Err(RltError::State(
+                    "max_seq_len exceeded during prefill".into(),
+                ));
             }
             let e_t = e.narrow(0, i, 1)?.unsqueeze(0)?; // (1,1,D)
             let u = self.merge(&e_t, &state.s)?;
@@ -62,14 +64,8 @@ impl Rlt {
     fn append_memory(&self, e_row: &Tensor, pos: usize, state: &mut RltState) -> Result<()> {
         let g_proj = |g: usize| -> Result<(Tensor, Tensor)> {
             let normed = crate::nn::rms_norm(e_row, crate::nn::NORM_EPS)?;
-            let k = crate::nn::split_heads(
-                &self.mem_k[g].forward(&normed)?,
-                self.config.n_heads,
-            )?;
-            let v = crate::nn::split_heads(
-                &self.mem_v[g].forward(&normed)?,
-                self.config.n_heads,
-            )?;
+            let k = crate::nn::split_heads(&self.mem_k[g].forward(&normed)?, self.config.n_heads)?;
+            let v = crate::nn::split_heads(&self.mem_v[g].forward(&normed)?, self.config.n_heads)?;
             let (k, _) = self.rotary.apply_qk(&k, &k, pos)?;
             Ok((k, v))
         };
@@ -99,7 +95,9 @@ impl Rlt {
     pub fn forward_loss(&self, tokens: &[u32], loss_mask: Option<&[f32]>) -> Result<Tensor> {
         let n = tokens.len();
         if n < 2 {
-            return Err(RltError::State("forward_loss needs at least 2 tokens".into()));
+            return Err(RltError::State(
+                "forward_loss needs at least 2 tokens".into(),
+            ));
         }
         let (logits, _) = self.prefill(tokens)?;
         let stacked = Tensor::stack(
@@ -122,7 +120,9 @@ impl Rlt {
                     )));
                 }
                 if m.iter().all(|&x| x == 0.0) {
-                    return Err(RltError::State("loss_mask has no supervised targets".into()));
+                    return Err(RltError::State(
+                        "loss_mask has no supervised targets".into(),
+                    ));
                 }
                 Tensor::from_vec(m.to_vec(), (n - 1,), &self.device)?
             }

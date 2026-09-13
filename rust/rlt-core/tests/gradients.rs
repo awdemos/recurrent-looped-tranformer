@@ -1,21 +1,30 @@
 use candle_core::{Device, Tensor, Var};
 use candle_nn::{AdamW, Optimizer, ParamsAdamW};
-use rlt_core::{RltConfig, Rlt};
+use rlt_core::{Rlt, RltConfig};
 
 fn tiny_config() -> RltConfig {
     RltConfig {
-        d_model: 16, n_heads: 2, d_ff: 32,
-        n_encoder_layers: 1, n_decoder_layers: 1,
-        window: 2, memory_groups: 1, vocab_size: 258,
-        tied: false, feedback_alpha: 0.1, max_seq_len: 32,
+        d_model: 16,
+        n_heads: 2,
+        d_ff: 32,
+        n_encoder_layers: 1,
+        n_decoder_layers: 1,
+        window: 2,
+        memory_groups: 1,
+        vocab_size: 258,
+        tied: false,
+        feedback_alpha: 0.1,
+        max_seq_len: 32,
     }
 }
 
 /// 4-D extraction (candle has no `to_vec4`): reshape to 3-D and regroup.
 fn t4(t: &Tensor) -> Vec<Vec<Vec<Vec<f32>>>> {
     let (a, b, c, d) = t.dims4().unwrap();
-    t.reshape((a * b, c, d)).unwrap()
-        .to_vec3::<f32>().unwrap()
+    t.reshape((a * b, c, d))
+        .unwrap()
+        .to_vec3::<f32>()
+        .unwrap()
         .chunks(b)
         .map(|c| c.to_vec())
         .collect()
@@ -31,8 +40,8 @@ fn fd_matches_backprop_on_attention_ops() {
     let loss_fn = |x: &Tensor, w: &Tensor| -> Tensor {
         // candle 0.11: plain `matmul` requires equal ranks/batches; broadcasting lives here.
         let xw = x.broadcast_matmul(w).unwrap(); // (1,2,3,8)
-        // split_heads maps (B,S,D) -> (B,H,S,hd): view the two leading dims as
-        // one sequence so the head split lands on the last dim (hd=4).
+                                                 // split_heads maps (B,S,D) -> (B,H,S,hd): view the two leading dims as
+                                                 // one sequence so the head split lands on the last dim (hd=4).
         let q = rlt_core::nn::split_heads(&xw.reshape((1, 6, 8)).unwrap(), 2).unwrap(); // (1,2,6,4)
         let (q, k) = rotary.apply_qk(&q, &q, 0).unwrap();
         let att = rlt_core::nn::sdpa(&q, &k, &q, None).unwrap();
@@ -40,12 +49,15 @@ fn fd_matches_backprop_on_attention_ops() {
         // in `lp - lm` puts eps=1e-3 central differences at ~1e-2 error — above the
         // 5e-3 tolerance. The 1/48 constant scales fd and analytic identically;
         // stress-tested worst |fd - analytic| is ~2e-4 across random draws.
-        rlt_core::nn::rms_norm(&rlt_core::nn::merge_heads(&att).unwrap().squeeze(0).unwrap(), 1e-5)
-            .unwrap()
-            .sqr()
-            .unwrap()
-            .mean_all()
-            .unwrap()
+        rlt_core::nn::rms_norm(
+            &rlt_core::nn::merge_heads(&att).unwrap().squeeze(0).unwrap(),
+            1e-5,
+        )
+        .unwrap()
+        .sqr()
+        .unwrap()
+        .mean_all()
+        .unwrap()
     };
     let loss = loss_fn(x.as_tensor(), w.as_tensor());
     let grads = loss.backward().unwrap();
@@ -88,7 +100,14 @@ fn fd_matches_backprop_on_named_parameters() {
     for name in ["merge.b_g", "encoder.0.q_proj.weight"] {
         let loss = model.forward_loss(&tokens, None).unwrap();
         let grads = loss.backward().unwrap();
-        let var = model.varmap.data().lock().unwrap().get(name).unwrap().clone();
+        let var = model
+            .varmap
+            .data()
+            .lock()
+            .unwrap()
+            .get(name)
+            .unwrap()
+            .clone();
         let t = var.as_tensor();
         let shape: Vec<usize> = t.dims().to_vec();
         let flat = t.flatten_all().unwrap().to_vec1::<f32>().unwrap();
@@ -105,12 +124,20 @@ fn fd_matches_backprop_on_named_parameters() {
             plus[idx] = orig + eps;
             var.set(&Tensor::from_vec(plus, shape.clone(), &Device::Cpu).unwrap())
                 .unwrap();
-            let lp = model.forward_loss(&tokens, None).unwrap().to_scalar::<f32>().unwrap();
+            let lp = model
+                .forward_loss(&tokens, None)
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
             let mut minus = flat.clone();
             minus[idx] = orig - eps;
             var.set(&Tensor::from_vec(minus, shape.clone(), &Device::Cpu).unwrap())
                 .unwrap();
-            let lm = model.forward_loss(&tokens, None).unwrap().to_scalar::<f32>().unwrap();
+            let lm = model
+                .forward_loss(&tokens, None)
+                .unwrap()
+                .to_scalar::<f32>()
+                .unwrap();
             var.set(&Tensor::from_vec(flat.clone(), shape.clone(), &Device::Cpu).unwrap())
                 .unwrap();
             let fd = (lp - lm) / (2.0 * eps);
@@ -132,8 +159,23 @@ fn backward_reaches_all_parameters() {
     let grads = loss.backward().unwrap();
     let vars = model.varmap.all_vars();
     assert!(vars.len() > 10);
-    let missing_count = vars.iter().filter(|v| grads.get(v.as_tensor()).is_none()).count();
+    let missing_count = vars
+        .iter()
+        .filter(|v| grads.get(v.as_tensor()).is_none())
+        .count();
     assert_eq!(missing_count, 0, "some parameters got no gradient");
+    // Existence alone can pass with a broken all-zeros backward: at least one
+    // sampled gradient must actually be non-zero.
+    let any_nonzero = vars.iter().any(|v| {
+        let g = grads.get(v.as_tensor()).unwrap();
+        g.flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap()
+            .iter()
+            .any(|&x| x != 0.0)
+    });
+    assert!(any_nonzero, "all gradients are zero");
 }
 
 /// SFT masking: loss changes; the unmasked forward computation is unaffected
@@ -142,7 +184,11 @@ fn backward_reaches_all_parameters() {
 fn masking_reweights_only_the_loss() {
     let model = Rlt::new(tiny_config(), Device::Cpu).unwrap();
     let tokens: Vec<u32> = vec![10, 11, 12, 13, 14];
-    let full = model.forward_loss(&tokens, None).unwrap().to_scalar::<f32>().unwrap();
+    let full = model
+        .forward_loss(&tokens, None)
+        .unwrap()
+        .to_scalar::<f32>()
+        .unwrap();
     let masked = model
         .forward_loss(&tokens, Some(&[0.0, 0.0, 0.0, 1.0]))
         .unwrap()
@@ -158,7 +204,10 @@ fn train_step_decreases_loss() {
     let model = Rlt::new(tiny_config(), Device::Cpu).unwrap();
     let mut opt = AdamW::new(
         model.varmap.all_vars(),
-        ParamsAdamW { lr: 0.01, ..Default::default() },
+        ParamsAdamW {
+            lr: 0.01,
+            ..Default::default()
+        },
     )
     .unwrap();
     let tokens: Vec<u32> = vec![42u32; 12];
@@ -167,5 +216,8 @@ fn train_step_decreases_loss() {
     for _ in 0..29 {
         last = model.train_step(&tokens, None, &mut opt).unwrap();
     }
-    assert!(last < first * 0.9, "loss did not decrease: {first} -> {last}");
+    assert!(
+        last < first * 0.9,
+        "loss did not decrease: {first} -> {last}"
+    );
 }

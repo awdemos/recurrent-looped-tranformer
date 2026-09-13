@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use candle_core::Device;
 
-use crate::{Rlt, RltConfig, RltError, Result};
+use crate::{Result, Rlt, RltConfig, RltError};
 
 fn config_path(weights: &Path) -> PathBuf {
     weights.with_extension("st.json")
@@ -31,13 +31,16 @@ pub fn save_checkpoint(model: &Rlt, path: &Path) -> Result<()> {
 /// Load a checkpoint written by [`save_checkpoint`].
 pub fn load_checkpoint(path: &Path, device: Device) -> Result<Rlt> {
     if !path.exists() {
-        return Err(RltError::Checkpoint(format!("no checkpoint at {}", path.display())));
+        return Err(RltError::Checkpoint(format!(
+            "no checkpoint at {}",
+            path.display()
+        )));
     }
     let cfg_path = config_path(path);
     let json = std::fs::read_to_string(&cfg_path)
         .map_err(|e| RltError::Checkpoint(format!("cannot read {}: {e}", cfg_path.display())))?;
-    let config: RltConfig =
-        serde_json::from_str(&json).map_err(|e| RltError::Checkpoint(format!("config parse: {e}")))?;
+    let config: RltConfig = serde_json::from_str(&json)
+        .map_err(|e| RltError::Checkpoint(format!("config parse: {e}")))?;
     let mut model = Rlt::new(config, device)?;
     model.varmap.load(path)?;
     Ok(model)

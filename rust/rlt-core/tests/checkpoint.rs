@@ -3,10 +3,17 @@ use rlt_core::{load_checkpoint, save_checkpoint, Rlt, RltConfig};
 
 fn tiny_config() -> RltConfig {
     RltConfig {
-        d_model: 32, n_heads: 2, d_ff: 64,
-        n_encoder_layers: 2, n_decoder_layers: 2,
-        window: 4, memory_groups: 1, vocab_size: 258,
-        tied: false, feedback_alpha: 0.1, max_seq_len: 64,
+        d_model: 32,
+        n_heads: 2,
+        d_ff: 64,
+        n_encoder_layers: 2,
+        n_decoder_layers: 2,
+        window: 4,
+        memory_groups: 1,
+        vocab_size: 258,
+        tied: false,
+        feedback_alpha: 0.1,
+        max_seq_len: 64,
     }
 }
 
@@ -26,7 +33,14 @@ fn checkpoint_roundtrip_preserves_logits() {
     assert_eq!(loaded.config, cfg);
     let (after, _) = loaded.prefill(&tokens).unwrap();
     for (a, b) in before.iter().zip(after.iter()) {
-        let d = (a - b).unwrap().abs().unwrap().max_all().unwrap().to_scalar::<f32>().unwrap();
+        let d = (a - b)
+            .unwrap()
+            .abs()
+            .unwrap()
+            .max_all()
+            .unwrap()
+            .to_scalar::<f32>()
+            .unwrap();
         assert_eq!(d, 0.0, "logits changed across checkpoint");
     }
     std::fs::remove_file(&path).ok();

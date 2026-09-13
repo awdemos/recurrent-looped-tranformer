@@ -19,7 +19,7 @@ Reference: [*Recurrent Looped Transformer*](https://github.com/yifanzhang-pro/re
 - Current-policy RL replay: `replay()` rebuilds the full history under current
   parameters and returns log-probs + importance ratios for action tokens.
 - Byte-level tokenizer, greedy/temperature/top-k sampling, safetensors checkpoints.
-- CPU by default; `cuda` feature for NVIDIA GPUs.
+- CPU by default; `cuda` feature for NVIDIA GPUs (experimental, not validated in CI).
 
 ## Quickstart
 
@@ -43,7 +43,7 @@ fn main() -> rlt_core::Result<()> {
 
 ```rust,no_run
 use rlt_core::{Rlt, RltConfig, Device};
-use candle_nn::{AdamW, Optimizer};
+use candle_nn::AdamW;
 
 fn main() -> rlt_core::Result<()> {
     let model = Rlt::new(RltConfig::default(), Device::Cpu)?;
@@ -59,7 +59,7 @@ masked tokens still update state (paper §5.2).
 ## RL replay
 
 ```rust,no_run
-use rlt_core::{replay, Rollout, SamplingMetadata};
+use rlt_core::{replay, Rollout};
 
 fn example(model: &rlt_core::Rlt, rollout: Rollout) -> rlt_core::Result<()> {
     let result = replay(model, &rollout)?;
