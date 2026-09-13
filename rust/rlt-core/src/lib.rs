@@ -12,3 +12,4 @@ pub mod tokenizer;
 
 pub use config::RltConfig;
 pub use error::{Result, RltError};
+pub use tokenizer::{ByteTokenizer, BOS_ID, EOS_ID, MIN_VOCAB};
